@@ -58,3 +58,7 @@ def root():
 @app.get("/health")
 def health_check():
     return {"status": "healthy", "scheduler": "active"}
+
+@app.head("/")
+def head_root():
+    return {}
