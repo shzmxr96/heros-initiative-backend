@@ -1,4 +1,5 @@
 modules = ["python-3.11"]
+
 [agent]
 expertMode = true
 
@@ -24,7 +25,7 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "shell.exec"
-args = "uvicorn main:app --host 0.0.0.0 --port 5000 --reload"
+args = "uvicorn main:app --host 0.0.0.0 --port 5000"
 waitForPort = 5000
 
 [workflows.workflow.metadata]
@@ -34,6 +35,10 @@ outputType = "webview"
 localPort = 5000
 externalPort = 80
 
+[[ports]]
+localPort = 8000
+externalPort = 8000
+
 [deployment]
 deploymentTarget = "autoscale"
-run = ["gunicorn", "--bind=0.0.0.0:5000", "--reuse-port", "-w", "4", "main:app"]
+run = ["uvicorn", "main:app", "--host=0.0.0.0", "--port=5000"]
