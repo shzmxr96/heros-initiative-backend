@@ -1,188 +1,247 @@
+"""
+Hero's Initiative — Data Pipeline v2.0
+=======================================
+Collects derived traffic metrics from Google Maps Distance Matrix API
+for 10 Karachi road segments every 15 minutes.
+
+IMPORTANT — Google Maps ToS Compliance:
+Raw API values (duration_normal_secs, duration_in_traffic_secs) are used
+transiently to calculate derived metrics and then immediately discarded.
+Only derived calculations are written to Supabase.
+"""
+
 import os
-import requests
+import httpx
+import asyncio
 from datetime import datetime, timezone
 from supabase import create_client, Client
 
+# ── Environment ────────────────────────────────────────────────────────────────
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
-GOOGLE_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
+GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
-KARACHI_ROADS = [
-    {
-        "id": "road_01",
+# ── Road segments — static reference data ─────────────────────────────────────
+# distance_meters is our own reference data, NOT from the Google API
+ROAD_SEGMENTS = {
+    "road_01": {
         "name": "Shahrae Faisal",
         "origin": "24.9008,67.1681",
         "destination": "24.8710,67.0822",
+        "distance_meters": 12000,
     },
-    {
-        "id": "road_02",
+    "road_02": {
         "name": "MA Jinnah Road",
         "origin": "24.8592,67.0104",
         "destination": "24.8607,67.0313",
+        "distance_meters": 3500,
     },
-    {
-        "id": "road_03",
+    "road_03": {
         "name": "University Road",
         "origin": "24.9312,67.1100",
         "destination": "24.9268,67.0791",
+        "distance_meters": 6000,
     },
-    {
-        "id": "road_04",
+    "road_04": {
         "name": "Korangi Road",
         "origin": "24.8350,67.1300",
         "destination": "24.8450,67.1650",
+        "distance_meters": 6000,
     },
-    {
-        "id": "road_05",
+    "road_05": {
         "name": "Northern Bypass",
         "origin": "25.0600,67.1800",
         "destination": "24.9900,67.2300",
+        "distance_meters": 15000,
     },
-    {
-        "id": "road_06",
+    "road_06": {
         "name": "Lyari Expressway",
         "origin": "24.8800,67.0200",
         "destination": "24.8350,66.9900",
+        "distance_meters": 10000,
     },
-    {
-        "id": "road_07",
+    "road_07": {
         "name": "Rashid Minhas Road",
         "origin": "24.9200,67.0900",
         "destination": "24.8950,67.0700",
+        "distance_meters": 4500,
     },
-    {
-        "id": "road_08",
+    "road_08": {
         "name": "Clifton Bridge",
         "origin": "24.8050,67.0250",
         "destination": "24.8120,67.0350",
+        "distance_meters": 4000,
     },
-    {
-        "id": "road_09",
+    "road_09": {
         "name": "Superhighway",
         "origin": "25.1200,67.2800",
         "destination": "24.9800,67.2100",
+        "distance_meters": 20000,
     },
-    {
-        "id": "road_10",
+    "road_10": {
         "name": "Hub River Road",
         "origin": "24.8900,66.9800",
         "destination": "24.8700,66.9200",
+        "distance_meters": 11000,
     },
+}
+
+# ── Calendar context ───────────────────────────────────────────────────────────
+RAMADAN_PERIODS = [
+    ("2024-03-11", "2024-04-09"),
+    ("2025-03-01", "2025-03-30"),
+    ("2026-02-18", "2026-03-19"),
+]
+EID_PERIODS = [
+    ("2024-04-10", "2024-04-13"),
+    ("2024-06-17", "2024-06-20"),
+    ("2025-03-31", "2025-04-03"),
+    ("2025-06-07", "2025-06-10"),
+    ("2026-03-20", "2026-03-23"),
 ]
 
 
-def calculate_congestion_level(google_data: dict) -> str:
-    try:
-        normal = google_data.get("duration_normal_secs")
-        in_traffic = google_data.get("duration_in_traffic_secs")
-        if not normal or not in_traffic:
-            return "unknown"
-        ratio = in_traffic / normal
-        if ratio <= 1.1:
-            return "free_flow"
-        elif ratio <= 1.3:
-            return "light"
-        elif ratio <= 1.6:
-            return "moderate"
-        else:
-            return "heavy"
-    except Exception:
-        return "unknown"
+def is_ramadan(dt: datetime) -> bool:
+    d = dt.strftime("%Y-%m-%d")
+    return any(s <= d <= e for s, e in RAMADAN_PERIODS)
 
 
-def fetch_google_traffic(road: dict) -> dict:
+def is_eid(dt: datetime) -> bool:
+    d = dt.strftime("%Y-%m-%d")
+    return any(s <= d <= e for s, e in EID_PERIODS)
+
+
+def is_monsoon(dt: datetime) -> bool:
+    return dt.month in [7, 8, 9]
+
+
+def classify_congestion(ratio: float) -> str:
+    """Classify congestion ratio into Hero's Initiative levels."""
+    if ratio < 1.10:
+        return "free_flow"
+    elif ratio < 1.30:
+        return "light"
+    elif ratio < 1.60:
+        return "moderate"
+    else:
+        return "heavy"
+
+
+# ── Core pipeline function ─────────────────────────────────────────────────────
+async def fetch_road_metrics(road_id: str, segment: dict) -> dict | None:
+    """
+    Call Google Maps Distance Matrix API for one road segment.
+
+    Raw values from the API response (duration_normal_secs,
+    duration_in_traffic_secs) are used ONLY to compute derived metrics
+    and are then discarded — never written to Supabase.
+    """
     url = "https://maps.googleapis.com/maps/api/distancematrix/json"
     params = {
-        "origins": road["origin"],
-        "destinations": road["destination"],
+        "origins": segment["origin"],
+        "destinations": segment["destination"],
         "departure_time": "now",
         "traffic_model": "best_guess",
-        "key": GOOGLE_API_KEY,
+        "key": GOOGLE_MAPS_API_KEY,
     }
+
     try:
-        response = requests.get(url, params=params, timeout=10)
-        data = response.json()
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(url, params=params)
+            data = resp.json()
+
+        if data.get("status") != "OK":
+            print(f"  [{road_id}] API error: {data.get('status')}")
+            return None
+
         element = data["rows"][0]["elements"][0]
-        return {
-            "duration_normal_secs": element["duration"]["value"],
-            "duration_in_traffic_secs": element.get("duration_in_traffic", {}).get(
-                "value"
-            ),
-            "distance_meters": element["distance"]["value"],
-            "status": element["status"],
-        }
-    except Exception as e:
-        return {"error": str(e), "status": "FAILED"}
+        if element.get("status") != "OK":
+            print(f"  [{road_id}] Element error: {element.get('status')}")
+            return None
 
+        # ── TRANSIENT: raw API values — used for calculation only, never stored ──
+        duration_normal_secs = element["duration"]["value"]
+        duration_in_traffic_secs = element["duration_in_traffic"]["value"]
+        distance_meters = segment["distance_meters"]  # our static reference
 
-def insert_to_supabase(
-    road: dict, google_data: dict, congestion_level: str, timestamp: str
-):
-    now = datetime.now(timezone.utc)
-    record = {
-        "road_id": road["id"],
-        "timestamp": timestamp,
-        "duration_normal_secs": google_data.get("duration_normal_secs"),
-        "duration_in_traffic_secs": google_data.get("duration_in_traffic_secs"),
-        "distance_meters": google_data.get("distance_meters"),
-        "congestion_ratio": round(
-            google_data["duration_in_traffic_secs"]
-            / google_data["duration_normal_secs"],
-            3,
+        # ── DERIVED: our calculations — these are what get stored ──────────────
+        congestion_ratio = round(duration_in_traffic_secs / duration_normal_secs, 3)
+        congestion_level = classify_congestion(congestion_ratio)
+        delay_seconds = max(0, duration_in_traffic_secs - duration_normal_secs)
+        estimated_speed_kmh = (
+            round((distance_meters / duration_in_traffic_secs) * 3.6, 1)
+            if duration_in_traffic_secs > 0
+            else 0.0
         )
-        if google_data.get("duration_normal_secs")
-        and google_data.get("duration_in_traffic_secs")
-        else None,
-        "congestion_level": congestion_level,
-        "google_status": google_data.get("status", "OK"),
-        "hour_of_day": now.hour,
-        "day_of_week": now.weekday(),
-        "is_weekend": now.weekday() >= 5,
-        "is_ramadan": False,
-        "is_eid": False,
-        "is_monsoon": now.month in [7, 8, 9],
-        "data_source": "google_maps",
-    }
-    try:
-        result = supabase.table("traffic_readings").insert(record).execute()
-        return True
+
+        # ── CONTEXT: enrichment flags — our derivations ─────────────────────────
+        now = datetime.now(timezone.utc)
+        hour_of_day = now.hour
+        day_of_week = now.weekday()
+        is_weekend = day_of_week >= 5
+
+        record = {
+            "road_id": road_id,
+            "timestamp": now.isoformat(),
+            # Derived metrics — our calculations, legally ours
+            "congestion_ratio": congestion_ratio,
+            "congestion_level": congestion_level,
+            "delay_seconds": delay_seconds,
+            "estimated_speed_kmh": estimated_speed_kmh,
+            "distance_meters": distance_meters,  # static reference
+            # Time features
+            "hour_of_day": hour_of_day,
+            "day_of_week": day_of_week,
+            "is_weekend": is_weekend,
+            # Context enrichment
+            "is_ramadan": is_ramadan(now),
+            "is_eid": is_eid(now),
+            "is_monsoon": is_monsoon(now),
+            # Source
+            "data_source": "google_maps",
+        }
+
+        return record
+
     except Exception as e:
-        print(f"  Supabase insert error for {road['id']}: {e}")
-        return False
+        print(f"  [{road_id}] Exception: {e}")
+        return None
 
 
-def run_pipeline():
-    print("Starting Hero's Initiative data pipeline...")
-    timestamp = datetime.now(timezone.utc).isoformat()
-    success_count = 0
+async def run_pipeline() -> int:
+    """
+    Collect derived traffic metrics for all 10 Karachi road segments.
+    Called every 15 minutes by the FastAPI lifespan scheduler.
+    Returns number of roads successfully collected.
+    """
+    now = datetime.now(timezone.utc)
+    print(f"\n[{now.strftime('%Y-%m-%d %H:%M:%S')} UTC] Pipeline run starting...")
 
-    for road in KARACHI_ROADS:
-        print(f"Fetching: {road['name']}...")
-        google_data = fetch_google_traffic(road)
+    # Fetch all roads concurrently
+    tasks = [fetch_road_metrics(rid, seg) for rid, seg in ROAD_SEGMENTS.items()]
+    results = await asyncio.gather(*tasks)
+    records = [r for r in results if r is not None]
+    failed = len(ROAD_SEGMENTS) - len(records)
 
-        if google_data.get("status") == "FAILED":
-            print(f"  Google API failed for {road['id']}: {google_data.get('error')}")
-            continue
-
-        congestion_level = calculate_congestion_level(google_data)
-        inserted = insert_to_supabase(road, google_data, congestion_level, timestamp)
-
-        if inserted:
-            ratio = round(
-                google_data["duration_in_traffic_secs"]
-                / google_data["duration_normal_secs"],
-                2,
-            )
+    if records:
+        supabase.table("traffic_readings").insert(records).execute()
+        print(f"  ✅ Inserted {len(records)}/10 roads | Failed: {failed}")
+        for r in records:
             print(
-                f"  {road['id']} -> {congestion_level} (ratio: {ratio}) saved to Supabase"
+                f"  {r['road_id']} ({ROAD_SEGMENTS[r['road_id']]['name']}): "
+                f"ratio={r['congestion_ratio']} ({r['congestion_level']}) | "
+                f"delay={r['delay_seconds']}s | "
+                f"speed={r['estimated_speed_kmh']}kmh"
             )
-            success_count += 1
+    else:
+        print("  ❌ No records inserted — all roads failed")
 
-    print(f"\nDone. {success_count}/10 roads saved to Supabase.")
-    return success_count
+    return len(records)
 
 
+# ── Standalone test ────────────────────────────────────────────────────────────
 if __name__ == "__main__":
-    run_pipeline()
+    count = asyncio.run(run_pipeline())
+    print(f"\nPipeline complete: {count} roads collected")
