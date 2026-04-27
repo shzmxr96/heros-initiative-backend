@@ -1,5 +1,5 @@
 """
-Hero's Initiative — Data Pipeline v2.0
+Hero's Initiative — Data Pipeline v2.1
 =======================================
 Collects derived traffic metrics from Google Maps Distance Matrix API
 for 10 Karachi road segments every 15 minutes.
@@ -8,6 +8,11 @@ IMPORTANT — Google Maps ToS Compliance:
 Raw API values (duration_normal_secs, duration_in_traffic_secs) are used
 transiently to calculate derived metrics and then immediately discarded.
 Only derived calculations are written to Supabase.
+
+v2.1 changes:
+- Captures inserted row IDs from Supabase response
+- Calls XGBoost inference after each pipeline run (if model is trained)
+- Calls accuracy backfill after inference
 """
 
 import os
@@ -17,6 +22,7 @@ from datetime import datetime, timezone
 from supabase import create_client, Client
 
 # ── Environment ────────────────────────────────────────────────────────────────
+
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_SERVICE_KEY = os.environ.get("SUPABASE_SERVICE_KEY")
 GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
@@ -24,6 +30,7 @@ GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # ── Road segments — static reference data ─────────────────────────────────────
+
 # distance_meters is our own reference data, NOT from the Google API
 ROAD_SEGMENTS = {
     "road_01": {
@@ -89,11 +96,13 @@ ROAD_SEGMENTS = {
 }
 
 # ── Calendar context ───────────────────────────────────────────────────────────
+
 RAMADAN_PERIODS = [
     ("2024-03-11", "2024-04-09"),
     ("2025-03-01", "2025-03-30"),
     ("2026-02-18", "2026-03-19"),
 ]
+
 EID_PERIODS = [
     ("2024-04-10", "2024-04-13"),
     ("2024-06-17", "2024-06-20"),
@@ -130,6 +139,8 @@ def classify_congestion(ratio: float) -> str:
 
 
 # ── Core pipeline function ─────────────────────────────────────────────────────
+
+
 async def fetch_road_metrics(road_id: str, segment: dict) -> dict | None:
     """
     Call Google Maps Distance Matrix API for one road segment.
@@ -210,6 +221,60 @@ async def fetch_road_metrics(road_id: str, segment: dict) -> dict | None:
         return None
 
 
+# ── ML Inference (non-fatal) ───────────────────────────────────────────────────
+
+
+def _run_inference(inserted_rows: list[dict]) -> None:
+    """
+    Run XGBoost inference for each successfully inserted road reading.
+    Silently skips if the model hasn't been trained yet.
+    Errors here are logged but never crash the pipeline.
+    """
+    try:
+        from app.ml.model_service import (
+            build_feature_dict,
+            predict_road,
+            model_is_trained,
+            backfill_accuracy,
+        )
+
+        if not model_is_trained():
+            print(
+                "  [ML] Model not yet trained — skipping inference. POST /api/v1/models/train to train."
+            )
+            return
+
+        for row in inserted_rows:
+            road_id = row["road_id"]
+            reading_id = row["id"]
+
+            # Fetch last 97 readings for lag features (97 = 96 prior + skip current)
+            history = (
+                supabase.table("traffic_readings")
+                .select("congestion_ratio")
+                .eq("road_id", road_id)
+                .order("timestamp", desc=True)
+                .limit(97)
+                .execute()
+            )
+            # Reverse to oldest-first; skip index 0 which is the just-inserted row
+            history_list = list(reversed(history.data[1:]))
+
+            features = build_feature_dict(row, history_list)
+            predict_road(road_id, reading_id, features)
+
+        # Backfill accuracy for any predictions whose horizon has now elapsed
+        updated = backfill_accuracy()
+        if updated:
+            print(f"  [ML] Backfilled {updated} prediction rows")
+
+    except Exception as e:
+        print(f"  [ML] Inference error (non-fatal): {e}")
+
+
+# ── Main pipeline ──────────────────────────────────────────────────────────────
+
+
 async def run_pipeline() -> int:
     """
     Collect derived traffic metrics for all 10 Karachi road segments.
@@ -222,11 +287,15 @@ async def run_pipeline() -> int:
     # Fetch all roads concurrently
     tasks = [fetch_road_metrics(rid, seg) for rid, seg in ROAD_SEGMENTS.items()]
     results = await asyncio.gather(*tasks)
+
     records = [r for r in results if r is not None]
     failed = len(ROAD_SEGMENTS) - len(records)
 
     if records:
-        supabase.table("traffic_readings").insert(records).execute()
+        # Insert and capture returned rows (includes generated UUIDs for inference)
+        insert_result = supabase.table("traffic_readings").insert(records).execute()
+        inserted_rows = insert_result.data
+
         print(f"  ✅ Inserted {len(records)}/10 roads | Failed: {failed}")
         for r in records:
             print(
@@ -235,6 +304,10 @@ async def run_pipeline() -> int:
                 f"delay={r['delay_seconds']}s | "
                 f"speed={r['estimated_speed_kmh']}kmh"
             )
+
+        # Run ML inference against the just-inserted rows
+        _run_inference(inserted_rows)
+
     else:
         print("  ❌ No records inserted — all roads failed")
 
@@ -242,6 +315,7 @@ async def run_pipeline() -> int:
 
 
 # ── Standalone test ────────────────────────────────────────────────────────────
+
 if __name__ == "__main__":
     count = asyncio.run(run_pipeline())
     print(f"\nPipeline complete: {count} roads collected")
