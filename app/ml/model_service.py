@@ -191,7 +191,7 @@ def train_xgboost(notes: str = "") -> dict:
     logger.info(f"train_xgboost: loaded {len(rows):,} rows")
 
     df = pd.DataFrame(rows)
-    df["timestamp"] = pd.to_datetime(df["timestamp"])
+    df["timestamp"] = pd.to_datetime(df["timestamp"], format="ISO8601")
     df = engineer_features(df)
 
     if len(df) < 500:
@@ -323,8 +323,12 @@ def predict_road(
 
     # SHAP values for multiclass — returns list of 4 arrays, each shape (1, n_features)
     # We take values for the predicted class to show what drove that specific prediction
-    shap_vals = explainer.shap_values(X)  # list[4] of ndarray (1, 13)
-    shap_for_class = shap_vals[predicted_class][0]  # shape (13,)
+    shap_vals_raw = explainer.shap_values(X)
+    # XGBoost 2.x returns 3D array (1, n_features, n_classes), older returns list of arrays
+    if isinstance(shap_vals_raw, list):
+        shap_for_class = shap_vals_raw[predicted_class][0]
+    else:
+        shap_for_class = shap_vals_raw[0, :, predicted_class]
     shap_dict = {
         FEATURES[i]: round(float(shap_for_class[i]), 6) for i in range(len(FEATURES))
     }
