@@ -209,3 +209,8 @@ data/models/*.pkl
 data/models/*.h5
 data/synthetic/*.csv
 data/raw/
+
+# Beads / Dolt files (added by bd init)
+.dolt/
+*.db
+.beads-credential-key
