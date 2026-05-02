@@ -40,7 +40,7 @@ As of March 1, 2025, the Routes API fully replaces both the Directions API and t
 ### Endpoint
 
 ```
-POST https://routes.googleapis.com/directions/v2:computeRouteMatrix
+POST https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix
 ```
 
 ### Required headers
@@ -61,10 +61,11 @@ X-Goog-FieldMask: originIndex,destinationIndex,duration,distanceMeters,status,co
     { "waypoint": { "location": { "latLng": { "latitude": 24.9246, "longitude": 67.0916 } } } }
   ],
   "travelMode": "DRIVE",
-  "routingPreference": "TRAFFIC_AWARE",
-  "departureTime": "now"
+  "routingPreference": "TRAFFIC_AWARE"
 }
 ```
+
+**Do not include `departureTime`.** The API rejects `"now"` as a value (tested — returns `INVALID_ARGUMENT: Timestamp must be set to a future time`). Omitting it entirely defaults to current time with `TRAFFIC_AWARE`, which is the correct behaviour.
 
 Always use `TRAFFIC_AWARE`. Never use `TRAFFIC_UNAWARE` or `TRAFFIC_AWARE_OPTIMAL`.
 
@@ -347,9 +348,9 @@ Polylines are fetched at **runtime when the dashboard loads** using `computeRout
 
 ## Three-Step Migration Plan
 
-1. **Migrate `data_pipeline.py`** — replace all Distance Matrix calls with `computeRouteMatrix`. Use `TRAFFIC_AWARE` + `departureTime: now`. Use the `ROAD_SEGMENTS` dict above as the authoritative source.
+1. **~~Migrate `data_pipeline.py`~~** ✅ **DONE** — `fetch_road_metrics()` now calls `computeRouteMatrix` via POST with `TRAFFIC_AWARE`. Endpoint: `distanceMatrix/v2:computeRouteMatrix`. Tested live against University Road — returning valid data. **Remaining:** replace the old 10-segment `ROAD_SEGMENTS` dict in `data_pipeline.py` with the 16-segment authoritative dict above.
 
-2. **Add `via:` waypoints** — segments marked `"via": "lat,lng"` in the dict must include that coordinate as a pass-through waypoint in the request body. After migration, flag any segment returning implausibly low `congestion_ratio` during peak hours — that is the signal of side-street routing.
+2. **~~Add `via:` waypoints~~** ✅ **DONE** — `computeRouteMatrix` does not support intermediates (tested — returns `INVALID_ARGUMENT: Cannot find field`). Segments with `"via"` set use `computeRoutes` (`directions/v2:computeRoutes`) with `"intermediates": [{"via": true, ...}]` instead. Segments without `"via"` continue to use `computeRouteMatrix`. All 16 segments tested live — 16/16 returning valid data. After collecting data, flag any segment returning implausibly low `congestion_ratio` during peak hours — that is the signal of side-street routing needing a waypoint.
 
 3. **`speedReadingIntervals` for dashboard** — runtime only, never pipeline, never stored.
 
@@ -382,6 +383,19 @@ Polylines are fetched at **runtime when the dashboard loads** using `computeRout
 ---
 
 ## Session Workflow
+
+### Environment setup (run at the start of every session)
+
+The `bd` CLI does not persist between Replit sessions. Reinstall it:
+
+```bash
+npm install -g @beads/bd@1.0.3
+export PATH="$PATH:$(npm root -g)/.bin"
+```
+
+The PATH export is also written to `/home/runner/.config/bashrc` so new shells pick it up automatically, but the npm global install must be re-run each session.
+
+### Task workflow
 
 1. Run `bd ready` — get the highest-priority unblocked task
 2. Check this CLAUDE.md for constraints relevant to that task

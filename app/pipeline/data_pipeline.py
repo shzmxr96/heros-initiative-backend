@@ -1,18 +1,18 @@
 """
-Hero's Initiative — Data Pipeline v2.1
+Hero's Initiative — Data Pipeline v2.2
 =======================================
-Collects derived traffic metrics from Google Maps Distance Matrix API
+Collects derived traffic metrics from Google Routes API (computeRouteMatrix)
 for 10 Karachi road segments every 15 minutes.
 
 IMPORTANT — Google Maps ToS Compliance:
-Raw API values (duration_normal_secs, duration_in_traffic_secs) are used
-transiently to calculate derived metrics and then immediately discarded.
-Only derived calculations are written to Supabase.
+Raw API values (duration, staticDuration) are used transiently to calculate
+derived metrics and then immediately discarded. Only derived calculations
+are written to Supabase.
 
-v2.1 changes:
-- Captures inserted row IDs from Supabase response
-- Calls XGBoost inference after each pipeline run (if model is trained)
-- Calls accuracy backfill after inference
+v2.2 changes:
+- Migrated from legacy Distance Matrix API to Routes API (computeRouteMatrix)
+- Uses TRAFFIC_AWARE routing preference for live traffic data
+- Supports optional via: waypoints per segment for route accuracy
 """
 
 import os
@@ -31,67 +31,149 @@ supabase: Client = create_client(SUPABASE_URL, SUPABASE_SERVICE_KEY)
 
 # ── Road segments — static reference data ─────────────────────────────────────
 
-# distance_meters is our own reference data, NOT from the Google API
+# distance_meters is our own reference data, NOT from the Google API.
+# via: mid-road pass-through waypoint for short segments to prevent side-street routing.
 ROAD_SEGMENTS = {
-    "road_01": {
+    # ── SHAHRAE FAISAL — 6 segments ─────────────────────────────────────────
+    "road_01a": {
         "name": "Shahrae Faisal",
-        "origin": "24.9008,67.1681",
-        "destination": "24.8710,67.0822",
-        "distance_meters": 12000,
+        "segment": "Airport to Drigh Road",
+        "origin": "24.900800,67.168100",
+        "destination": "24.887019,67.125427",
+        "distance_meters": 5800,
+        "via": None,
     },
-    "road_02": {
-        "name": "MA Jinnah Road",
-        "origin": "24.8592,67.0104",
-        "destination": "24.8607,67.0313",
-        "distance_meters": 3500,
+    "road_01b": {
+        "name": "Shahrae Faisal",
+        "segment": "Drigh Road to Karsaz",
+        "origin": "24.887019,67.125427",
+        "destination": "24.874779,67.095790",
+        "distance_meters": 3400,
+        "via": None,
     },
-    "road_03": {
-        "name": "University Road",
-        "origin": "24.9312,67.1100",
-        "destination": "24.9268,67.0791",
-        "distance_meters": 6000,
+    "road_01c": {
+        "name": "Shahrae Faisal",
+        "segment": "Karsaz to Shaheed-e-Millat Bridge",
+        "origin": "24.874779,67.095790",
+        "destination": "24.867330,67.083804",
+        "distance_meters": 1500,
+        "via": None,
     },
-    "road_04": {
-        "name": "Korangi Road",
-        "origin": "24.8350,67.1300",
-        "destination": "24.8450,67.1650",
-        "distance_meters": 6000,
+    "road_01d": {
+        "name": "Shaheed-e-Millat Rd",
+        "segment": "Shaheed-e-Millat Bridge to City School PAF",
+        "origin": "24.867330,67.083804",
+        "destination": "24.861271,67.088200",
+        "distance_meters": 850,
+        "via": None,
     },
-    "road_05": {
-        "name": "Northern Bypass",
-        "origin": "25.0600,67.1800",
-        "destination": "24.9900,67.2300",
-        "distance_meters": 15000,
+    "road_01e": {
+        "name": "Shaheed-e-Millat Rd",
+        "segment": "City School PAF to Manzoor Colony Parallel Rd",
+        "origin": "24.861271,67.088200",
+        "destination": "24.845614,67.087526",
+        "distance_meters": 1800,
+        "via": None,
     },
-    "road_06": {
-        "name": "Lyari Expressway",
-        "origin": "24.8800,67.0200",
-        "destination": "24.8350,66.9900",
-        "distance_meters": 10000,
+    "road_01f": {
+        "name": "Shahrae Faisal",
+        "segment": "Shahrah-e-Qaideen Flyover to Metropole",
+        "origin": "24.859755,67.059040",
+        "destination": "24.849675,67.030451",
+        "distance_meters": 3300,
+        "via": None,
     },
-    "road_07": {
+    # ── SHAHEED-E-MILLAT RD — 2 segments ────────────────────────────────────
+    "road_02a": {
+        "name": "Shaheed-e-Millat Rd",
+        "segment": "Defence/Korangi to Manzoor Colony",
+        "origin": "24.831287,67.079822",
+        "destination": "24.852834,67.089831",
+        "distance_meters": 2700,
+        "via": None,
+    },
+    "road_02b": {
+        "name": "Shaheed-e-Millat Rd",
+        "segment": "Manzoor Colony to Shaheed-e-Millat Bridge",
+        "origin": "24.852834,67.089831",
+        "destination": "24.866864,67.083022",
+        "distance_meters": 1800,
+        "via": None,
+    },
+    # ── KHAYABAN-E-IQBAL (CLIFTON) — 2 segments ─────────────────────────────
+    "road_04a": {
+        "name": "Khayaban-e-Iqbal",
+        "segment": "Metropole to Teen Talwar",
+        "origin": "24.849675,67.030451",
+        "destination": "24.833776,67.033724",
+        "distance_meters": 1800,
+        "via": None,
+    },
+    "road_04b": {
+        "name": "Khayaban-e-Iqbal",
+        "segment": "Teen Talwar to Do Talwar",
+        "origin": "24.833776,67.033724",
+        "destination": "24.821175,67.034203",
+        "distance_meters": 1500,
+        "via": None,
+    },
+    # ── ALLAMA SHABBIR AHMED USMANI RD — 3 segments ─────────────────────────
+    "road_05a": {
+        "name": "Allama Shabbir Ahmed Usmani Rd",
+        "segment": "Disco Bakery to Gulshan Chowrangi",
+        "origin": "24.929126,67.097527",
+        "destination": "24.924578,67.091605",
+        "distance_meters": 800,
+        "via": "24.926800,67.094500",
+    },
+    "road_05b": {
         "name": "Rashid Minhas Road",
-        "origin": "24.9200,67.0900",
-        "destination": "24.8950,67.0700",
-        "distance_meters": 4500,
+        "segment": "Nipa Chowrangi to Gulshan Chowrangi",
+        "origin": "24.917845,67.097369",
+        "destination": "24.924578,67.091605",
+        "distance_meters": 900,
+        "via": "24.921200,67.094400",
     },
-    "road_08": {
-        "name": "Clifton Bridge",
-        "origin": "24.8050,67.0250",
-        "destination": "24.8120,67.0350",
-        "distance_meters": 4000,
+    "road_05c": {
+        "name": "Allama Shabbir Ahmed Usmani Rd",
+        "segment": "Maskan Chowrangi to Disco Bakery",
+        "origin": "24.935079,67.105263",
+        "destination": "24.929126,67.097527",
+        "distance_meters": 1000,
+        "via": "24.932000,67.101400",
     },
-    "road_09": {
-        "name": "Superhighway",
-        "origin": "25.1200,67.2800",
-        "destination": "24.9800,67.2100",
-        "distance_meters": 20000,
+    # ── RASHID MINHAS ROAD — 4 segments ─────────────────────────────────────
+    "road_06a": {
+        "name": "Rashid Minhas Road",
+        "segment": "Gulshan Chowrangi to Nipa Chowrangi",
+        "origin": "24.924578,67.091605",
+        "destination": "24.917845,67.097369",
+        "distance_meters": 900,
+        "via": "24.921200,67.094400",
     },
-    "road_10": {
-        "name": "Hub River Road",
-        "origin": "24.8900,66.9800",
-        "destination": "24.8700,66.9200",
-        "distance_meters": 11000,
+    "road_06b": {
+        "name": "Rashid Minhas Road",
+        "segment": "Nipa Chowrangi to Johar Mor",
+        "origin": "24.917845,67.097369",
+        "destination": "24.903882,67.114075",
+        "distance_meters": 2200,
+        "via": None,
+    },
+    "road_06c": {
+        "name": "Rashid Minhas Road",
+        "segment": "Johar Mor to Askari 4",
+        "origin": "24.903882,67.114075",
+        "destination": "24.900911,67.116371",
+        "distance_meters": 500,
+        "via": "24.902400,67.115200",
+    },
+    "road_06d": {
+        "name": "Rashid Minhas Road",
+        "segment": "Askari 4 to Drigh Road",
+        "origin": "24.900911,67.116371",
+        "destination": "24.887019,67.125427",
+        "distance_meters": 1500,
+        "via": None,
     },
 }
 
@@ -141,40 +223,90 @@ def classify_congestion(ratio: float) -> str:
 # ── Core pipeline function ─────────────────────────────────────────────────────
 
 
+def _parse_latlng(coord_str: str) -> dict:
+    lat, lng = coord_str.split(",")
+    return {"latitude": float(lat), "longitude": float(lng)}
+
+
+async def _fetch_via_route(road_id: str, segment: dict, client: httpx.AsyncClient) -> tuple[int, int] | None:
+    """
+    Use computeRoutes (single route) for segments that need a via: waypoint.
+    computeRouteMatrix does not support intermediates.
+    Returns (duration_in_traffic_secs, duration_normal_secs) or None on error.
+    """
+    url = "https://routes.googleapis.com/directions/v2:computeRoutes"
+    headers = {
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+        "X-Goog-FieldMask": "routes.duration,routes.staticDuration",
+    }
+    body = {
+        "origin": {"location": {"latLng": _parse_latlng(segment["origin"])}},
+        "destination": {"location": {"latLng": _parse_latlng(segment["destination"])}},
+        "intermediates": [{"via": True, "location": {"latLng": _parse_latlng(segment["via"])}}],
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+    }
+    resp = await client.post(url, headers=headers, json=body)
+    data = resp.json()
+    routes = data.get("routes", [])
+    if not routes:
+        print(f"  [{road_id}] computeRoutes error: {data}")
+        return None
+    route = routes[0]
+    duration_secs = int(route.get("duration", "0s").rstrip("s"))
+    static_secs = int(route.get("staticDuration", "0s").rstrip("s"))
+    return duration_secs, static_secs
+
+
+async def _fetch_matrix_route(road_id: str, segment: dict, client: httpx.AsyncClient) -> tuple[int, int] | None:
+    """
+    Use computeRouteMatrix for standard segments (no via: waypoint needed).
+    Returns (duration_in_traffic_secs, duration_normal_secs) or None on error.
+    """
+    url = "https://routes.googleapis.com/distanceMatrix/v2:computeRouteMatrix"
+    headers = {
+        "X-Goog-Api-Key": GOOGLE_MAPS_API_KEY,
+        "X-Goog-FieldMask": "originIndex,destinationIndex,duration,staticDuration,status,condition",
+    }
+    body = {
+        "origins": [{"waypoint": {"location": {"latLng": _parse_latlng(segment["origin"])}}}],
+        "destinations": [{"waypoint": {"location": {"latLng": _parse_latlng(segment["destination"])}}}],
+        "travelMode": "DRIVE",
+        "routingPreference": "TRAFFIC_AWARE",
+    }
+    resp = await client.post(url, headers=headers, json=body)
+    data = resp.json()
+    if not isinstance(data, list) or not data:
+        print(f"  [{road_id}] computeRouteMatrix error: {data}")
+        return None
+    element = data[0]
+    if element.get("condition") == "ROUTE_NOT_FOUND" or element.get("status", {}).get("code", 0) != 0:
+        print(f"  [{road_id}] Route error: {element.get('condition')} / {element.get('status')}")
+        return None
+    duration_secs = int(element.get("duration", "0s").rstrip("s"))
+    static_secs = int(element.get("staticDuration", "0s").rstrip("s"))
+    return duration_secs, static_secs
+
+
 async def fetch_road_metrics(road_id: str, segment: dict) -> dict | None:
     """
-    Call Google Maps Distance Matrix API for one road segment.
+    Fetch live traffic for one road segment via Google Routes API.
+    Segments with a via: waypoint use computeRoutes; all others use computeRouteMatrix.
 
-    Raw values from the API response (duration_normal_secs,
-    duration_in_traffic_secs) are used ONLY to compute derived metrics
-    and are then discarded — never written to Supabase.
+    Raw values from the API (duration, staticDuration) are used transiently
+    to compute derived metrics and then discarded — never written to Supabase.
     """
-    url = "https://maps.googleapis.com/maps/api/distancematrix/json"
-    params = {
-        "origins": segment["origin"],
-        "destinations": segment["destination"],
-        "departure_time": "now",
-        "traffic_model": "best_guess",
-        "key": GOOGLE_MAPS_API_KEY,
-    }
-
     try:
         async with httpx.AsyncClient(timeout=10.0) as client:
-            resp = await client.get(url, params=params)
-            data = resp.json()
+            if segment.get("via"):
+                result = await _fetch_via_route(road_id, segment, client)
+            else:
+                result = await _fetch_matrix_route(road_id, segment, client)
 
-        if data.get("status") != "OK":
-            print(f"  [{road_id}] API error: {data.get('status')}")
+        if result is None:
             return None
 
-        element = data["rows"][0]["elements"][0]
-        if element.get("status") != "OK":
-            print(f"  [{road_id}] Element error: {element.get('status')}")
-            return None
-
-        # ── TRANSIENT: raw API values — used for calculation only, never stored ──
-        duration_normal_secs = element["duration"]["value"]
-        duration_in_traffic_secs = element["duration_in_traffic"]["value"]
+        duration_in_traffic_secs, duration_normal_secs = result
         distance_meters = segment["distance_meters"]  # our static reference
 
         # ── DERIVED: our calculations — these are what get stored ──────────────
