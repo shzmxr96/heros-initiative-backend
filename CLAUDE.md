@@ -107,13 +107,13 @@ Raw values (`duration`, `staticDuration`, `distanceMeters`) are transient local 
 
 ---
 
-## Finalised PoC Segment List — 16 Forward Segments
+## Finalised PoC Segment List — 17 Forward Segments
 
 **Decision:** Reverse segments dropped for PoC. Forward direction captures peak commuter flow and is sufficient to demonstrate actionable government intelligence. Reverse segments added back in Phase 2.
 
 **Pipeline frequency:** Every 15 minutes (96 runs/day).
 **Monthly API cost:** ~$206/month (~£163) — Routes API Pro SKU, pay-as-you-go.
-**Monthly API calls:** 16 segments × 96 runs/day × 30 days = 46,080 requests/month.
+**Monthly API calls:** 17 segments × 96 runs/day × 30 days = 48,960 requests/month.
 
 ### Shahrae Faisal — 6 segments
 
@@ -348,11 +348,29 @@ Polylines are fetched at **runtime when the dashboard loads** using `computeRout
 
 ## Three-Step Migration Plan
 
-1. **~~Migrate `data_pipeline.py`~~** ✅ **DONE** — `fetch_road_metrics()` now calls `computeRouteMatrix` via POST with `TRAFFIC_AWARE`. Endpoint: `distanceMatrix/v2:computeRouteMatrix`. Tested live against University Road — returning valid data. **Remaining:** replace the old 10-segment `ROAD_SEGMENTS` dict in `data_pipeline.py` with the 16-segment authoritative dict above.
+1. **~~Migrate `data_pipeline.py`~~** ✅ **DONE** — `fetch_road_metrics()` refactored into two helpers: `_fetch_matrix_route()` (uses `computeRouteMatrix`) for segments without via waypoints, and `_fetch_via_route()` (uses `computeRoutes`) for segments that need forced routing. All 17 segments tested live — 17/17 returning valid data. `ROAD_SEGMENTS` updated to the finalised 17-segment PoC list.
 
-2. **~~Add `via:` waypoints~~** ✅ **DONE** — `computeRouteMatrix` does not support intermediates (tested — returns `INVALID_ARGUMENT: Cannot find field`). Segments with `"via"` set use `computeRoutes` (`directions/v2:computeRoutes`) with `"intermediates": [{"via": true, ...}]` instead. Segments without `"via"` continue to use `computeRouteMatrix`. All 16 segments tested live — 16/16 returning valid data. After collecting data, flag any segment returning implausibly low `congestion_ratio` during peak hours — that is the signal of side-street routing needing a waypoint.
+2. **~~Add `via:` waypoints — implementation~~** ✅ **DONE** — `computeRouteMatrix` does not support intermediates (tested — returns `INVALID_ARGUMENT`). Segments with `"via"` set call `computeRoutes` with `"intermediates": [{"via": true, ...}]`. **Remaining: via coordinates need verification.** Current waypoint coordinates were estimated and some are misplaced (e.g. road_05a via is on wrong side of road). A new mapping file will be drawn and pushed to GitHub — next session should rebuild `ROAD_SEGMENTS` from that file.
 
 3. **`speedReadingIntervals` for dashboard** — runtime only, never pipeline, never stored.
+
+---
+
+## Map Preview Tool
+
+A live traffic map preview exists at `tools/map_preview.py`. Run it to regenerate `map_preview.html`, which is served at `/map` by the FastAPI app.
+
+```bash
+python tools/map_preview.py
+```
+
+**What it does:** Calls `computeRoutes` for all 17 segments (with actual road polylines), calculates congestion level, and generates a self-contained Leaflet map with:
+- Sidebar segment picker grouped by road name, with VIA pill badges
+- Green dot = start, red dot = end, purple dot = via waypoint
+- Click any segment to isolate and zoom in
+- "All segments" button to reset
+
+**Next step for this tool:** Rebuild `ROAD_SEGMENTS` from the new mapping file once it is pushed to GitHub. Then re-verify all via waypoint coordinates visually on the map.
 
 ---
 

@@ -3,6 +3,7 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, HTMLResponse
 from app.api.routes import router
 from app.core.config import settings
 
@@ -71,3 +72,12 @@ def health_check():
 @app.head("/")
 def head_root():
     return {}
+
+
+@app.get("/map")
+def map_preview():
+    path = "/home/runner/workspace/map_preview.html"
+    import os
+    if not os.path.exists(path):
+        return HTMLResponse("<h2>Map not generated yet. Run: <code>python tools/map_preview.py</code></h2>", status_code=404)
+    return FileResponse(path, media_type="text/html")
