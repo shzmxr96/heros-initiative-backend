@@ -58,16 +58,12 @@ RATIO_MIDPOINT = {
 
 # Road ID ordinal encoding — matches road_segments insert order
 ROAD_ENCODE = {
-    "road_01": 0,
-    "road_02": 1,
-    "road_03": 2,
-    "road_04": 3,
-    "road_05": 4,
-    "road_06": 5,
-    "road_07": 6,
-    "road_08": 7,
-    "road_09": 8,
-    "road_10": 9,
+    "road_01a":  0, "road_01b":  1, "road_01c":  2,
+    "road_01d":  3, "road_01e":  4, "road_01f":  5,
+    "road_02a":  6, "road_02b":  7,
+    "road_04a":  8, "road_04b":  9,
+    "road_05a": 10, "road_05b": 11, "road_05c": 12,
+    "road_06a": 13, "road_06b": 14, "road_06c": 15, "road_06d": 16,
 }
 
 # Feature column order — must be identical between training and inference
@@ -146,6 +142,9 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
 
     # Encode target
     df["target"] = df["congestion_level"].map(LEVEL_ENCODE)
+
+    # Drop rows with unknown road_id (e.g. old synthetic data from deprecated segments)
+    df = df[df["road_id_encoded"] != -1]
 
     # Drop rows with missing lag history or unrecognised congestion_level
     df = df.dropna(subset=["lag_1", "lag_4", "rolling_mean_4", "target"])

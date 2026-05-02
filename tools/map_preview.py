@@ -19,22 +19,22 @@ GOOGLE_MAPS_API_KEY = os.environ.get("GOOGLE_MAPS_API_KEY")
 
 ROAD_SEGMENTS = {
     "road_01a": {"name": "Shahrae Faisal", "segment": "Airport to Drigh Road", "origin": "24.900800,67.168100", "destination": "24.887019,67.125427", "distance_meters": 5800, "via": None},
-    "road_01b": {"name": "Shahrae Faisal", "segment": "Drigh Road to Karsaz", "origin": "24.887019,67.125427", "destination": "24.874779,67.095790", "distance_meters": 3400, "via": None},
+    "road_01b": {"name": "Shahrae Faisal", "segment": "Drigh Road to Karsaz", "origin": "24.886820,67.124261", "destination": "24.874779,67.095790", "distance_meters": 3400, "via": None},
     "road_01c": {"name": "Shahrae Faisal", "segment": "Karsaz to Shaheed-e-Millat Bridge", "origin": "24.874779,67.095790", "destination": "24.867330,67.083804", "distance_meters": 1500, "via": None},
     "road_01d": {"name": "Shaheed-e-Millat Rd", "segment": "Shaheed-e-Millat Bridge to City School PAF", "origin": "24.867330,67.083804", "destination": "24.861271,67.088200", "distance_meters": 850, "via": None},
-    "road_01e": {"name": "Shaheed-e-Millat Rd", "segment": "City School PAF to Manzoor Colony Parallel Rd", "origin": "24.861271,67.088200", "destination": "24.845614,67.087526", "distance_meters": 1800, "via": None},
-    "road_01f": {"name": "Shahrae Faisal", "segment": "Shahrah-e-Qaideen Flyover to Metropole", "origin": "24.859755,67.059040", "destination": "24.849675,67.030451", "distance_meters": 3300, "via": None},
-    "road_02a": {"name": "Shaheed-e-Millat Rd", "segment": "Defence/Korangi to Manzoor Colony", "origin": "24.831287,67.079822", "destination": "24.852834,67.089831", "distance_meters": 2700, "via": None},
+    "road_01e": {"name": "Shaheed-e-Millat Rd", "segment": "City School PAF to Manzoor Colony Parallel Rd", "origin": "24.861232,67.088067", "destination": "24.845614,67.087526", "distance_meters": 1800, "via": None},
+    "road_01f": {"name": "Shahrae Faisal", "segment": "Shahrah-e-Qaideen Flyover to Metropole", "origin": "24.859613,67.058741", "destination": "24.849675,67.030451", "distance_meters": 3300, "via": None},
+    "road_02a": {"name": "Shaheed-e-Millat Rd", "segment": "Defence/Korangi to Manzoor Colony", "origin": "24.830991,67.079535", "destination": "24.852834,67.089831", "distance_meters": 2700, "via": None},
     "road_02b": {"name": "Shaheed-e-Millat Rd", "segment": "Manzoor Colony to Shaheed-e-Millat Bridge", "origin": "24.852834,67.089831", "destination": "24.866864,67.083022", "distance_meters": 1800, "via": None},
-    "road_04a": {"name": "Khayaban-e-Iqbal", "segment": "Metropole to Teen Talwar", "origin": "24.849675,67.030451", "destination": "24.833776,67.033724", "distance_meters": 1800, "via": None},
+    "road_04a": {"name": "Khayaban-e-Iqbal", "segment": "Metropole to Teen Talwar", "origin": "24.849679,67.030558", "destination": "24.833776,67.033724", "distance_meters": 1800, "via": None},
     "road_04b": {"name": "Khayaban-e-Iqbal", "segment": "Teen Talwar to Do Talwar", "origin": "24.833776,67.033724", "destination": "24.821175,67.034203", "distance_meters": 1500, "via": None},
-    "road_05a": {"name": "Allama Shabbir Ahmed Usmani Rd", "segment": "Disco Bakery to Gulshan Chowrangi", "origin": "24.929126,67.097527", "destination": "24.924578,67.091605", "distance_meters": 800, "via": "24.926800,67.094500"},
-    "road_05b": {"name": "Rashid Minhas Road", "segment": "Nipa Chowrangi to Gulshan Chowrangi", "origin": "24.917845,67.097369", "destination": "24.924578,67.091605", "distance_meters": 900, "via": "24.921200,67.094400"},
+    "road_05a": {"name": "Allama Shabbir Ahmed Usmani Rd", "segment": "Disco Bakery to Gulshan Chowrangi", "origin": "24.928994,67.097579", "destination": "24.924415,67.091974", "distance_meters": 800, "via": "24.927191,67.095309"},
+    "road_05b": {"name": "Rashid Minhas Road", "segment": "Nipa Chowrangi to Gulshan Chowrangi", "origin": "24.917749,67.096957", "destination": "24.924293,67.091536", "distance_meters": 900, "via": "24.921277,67.094047"},
     "road_05c": {"name": "Allama Shabbir Ahmed Usmani Rd", "segment": "Maskan Chowrangi to Disco Bakery", "origin": "24.935079,67.105263", "destination": "24.929126,67.097527", "distance_meters": 1000, "via": "24.932000,67.101400"},
     "road_06a": {"name": "Rashid Minhas Road", "segment": "Gulshan Chowrangi to Nipa Chowrangi", "origin": "24.924578,67.091605", "destination": "24.917845,67.097369", "distance_meters": 900, "via": "24.921200,67.094400"},
-    "road_06b": {"name": "Rashid Minhas Road", "segment": "Nipa Chowrangi to Johar Mor", "origin": "24.917845,67.097369", "destination": "24.903882,67.114075", "distance_meters": 2200, "via": None},
-    "road_06c": {"name": "Rashid Minhas Road", "segment": "Johar Mor to Askari 4", "origin": "24.903882,67.114075", "destination": "24.900911,67.116371", "distance_meters": 500, "via": "24.902400,67.115200"},
-    "road_06d": {"name": "Rashid Minhas Road", "segment": "Askari 4 to Drigh Road", "origin": "24.900911,67.116371", "destination": "24.887019,67.125427", "distance_meters": 1500, "via": None},
+    "road_06b": {"name": "Rashid Minhas Road", "segment": "Nipa Chowrangi to Johar Mor", "origin": "24.917845,67.097369", "destination": "24.903882,67.114075", "distance_meters": 2300, "via": None},
+    "road_06c": {"name": "Rashid Minhas Road", "segment": "Johar Mor to Askari 4", "origin": "24.903882,67.114075", "destination": "24.900911,67.116371", "distance_meters": 500, "via": "24.902139,67.115517"},
+    "road_06d": {"name": "Rashid Minhas Road", "segment": "Askari 4 to Drigh Road", "origin": "24.900911,67.116371", "destination": "24.886764,67.124087", "distance_meters": 1900, "via": None},
 }
 
 CONGESTION_COLOURS = {

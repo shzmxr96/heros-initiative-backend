@@ -132,7 +132,7 @@ ROAD_SEGMENTS = {
         "origin": "24.917749,67.096957",
         "destination": "24.924293,67.091536",
         "distance_meters": 900,
-        "via": "24.921200,67.094400",
+        "via": "24.921277,67.094047",
     },
     "road_05c": {
         "name": "Allama Shabbir Ahmed Usmani Rd",
